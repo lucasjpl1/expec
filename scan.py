@@ -1,20 +1,21 @@
 import tkinter as tk
 from tkinter import ttk
+from tkinter import simpledialog  # Importe a caixa de diálogo simples
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 import pandas as pd
-
 # Criar janela Tkinter
 root = tk.Tk()
 root.title("Scanner de Códigos de Barras")
 
 # Criar Treeview para exibir os dados em forma de tabela
-tree = ttk.Treeview(root, columns=("ID", "Nota", "Rastreio", "Date"), show="headings")
+tree = ttk.Treeview(root, columns=("ID", "Nota", "Rastreio", "Date", "Lote"), show="headings")
 tree.heading("ID", text="ID")
 tree.heading("Nota", text="Nota")
 tree.heading("Rastreio", text="Rastreio")
 tree.heading("Date", text="Date")
+tree.heading("Lote", text="Lote")
 tree.pack(fill="both", expand=True)
 
 # Função para carregar os dados da tabela
@@ -119,7 +120,7 @@ def search_barcode():
                 cursor = connection.cursor()
 
                 # Realizar a pesquisa no banco de dados
-                cursor.execute("SELECT * FROM codigos WHERE Nota LIKE %s OR Rastreio LIKE %s", ('%' + search_text + '%', '%' + search_text + '%'))
+                cursor.execute("SELECT c.* FROM codigos c INNER JOIN lotes l ON c.Lote = l.id WHERE c.Nota LIKE %s OR c.Rastreio LIKE %s OR l.nome LIKE %s", ('%' + search_text + '%', '%' + search_text + '%', '%' + search_text + '%'))
                 rows = cursor.fetchall()
 
                 # Limpar a tabela
@@ -166,9 +167,49 @@ def delete_item():
                 cursor.close()
                 connection.close()
 
-# Função para exportar os dados para um arquivo Excel
+# Função para obter o nome do lote do usuário
+def get_lote_name():
+    root = tk.Tk()
+    root.withdraw()  # Ocultar a janela principal
+
+    lote_name = simpledialog.askstring("Selecionar Lote", "Insira o nome do lote:")
+    root.destroy()  # Fechar a janela secundária após obter o nome do lote
+
+    return lote_name
+
+def get_export_info():
+    root = tk.Tk()
+    root.withdraw()  # Ocultar a janela principal
+
+    lote_name = simpledialog.askstring("Selecionar Lote", "Insira o nome do lote:")
+    if not lote_name:
+        root.destroy()
+        return None, None
+
+    date_str = simpledialog.askstring("Selecionar Data", "Insira a data (dd/mm/yyyy):")
+    if not date_str:
+        root.destroy()
+        return None, None
+
+    # Converter a string de data para o formato esperado (dd/mm/yyyy)
+    try:
+        date = datetime.strptime(date_str, "%d/%m/%Y").date()
+    except ValueError:
+        print("Formato de data inválido. Use o formato dd/mm/yyyy.")
+        root.destroy()
+        return None, None
+
+    root.destroy()  # Fechar a janela após obter as informações
+    return lote_name, date
+
 def export_to_excel():
     try:
+        # Obter as informações de exportação do usuário
+        lote_name, date = get_export_info()
+        if not lote_name or not date:
+            print("Nenhum nome de lote ou data fornecidos.")
+            return
+
         # Conectar ao banco de dados e carregar os dados
         connection = mysql.connector.connect(
             host='192.168.1.11',
@@ -180,15 +221,15 @@ def export_to_excel():
         if connection.is_connected():
             cursor = connection.cursor()
 
-            # Selecionar todos os registros da tabela
-            cursor.execute("SELECT * FROM codigos")
+            # Selecionar todos os registros da tabela para o lote e data especificados
+            cursor.execute("SELECT Nota, Rastreio, Date_added FROM codigos WHERE Lote IN (SELECT id FROM lotes WHERE nome = %s) AND DATE(Date_added) = %s", (lote_name, date))
             rows = cursor.fetchall()
 
             # Criar um DataFrame Pandas com os dados
-            df = pd.DataFrame(rows, columns=["ID", "Nota", "Rastreio", "Date"])
+            df = pd.DataFrame(rows, columns=["Nota", "Rastreio", "Date_added"])
 
             # Exportar para um arquivo Excel, substituindo o arquivo existente
-            df.to_excel("dados_codigos.xlsx", index=False)
+            df.to_excel(f"{lote_name}_{date}_dados_codigos.xlsx", index=False)
 
             print("Dados exportados para o arquivo Excel com sucesso.")
 
@@ -199,6 +240,14 @@ def export_to_excel():
         if connection and connection.is_connected():
             cursor.close()
             connection.close()
+
+# Função para exportar os dados quando o botão de exportar é pressionado
+def export_button_pressed():
+    export_to_excel()
+
+# Criar o botão de exportação
+btn_export_excel = tk.Button(root, text="Exportar para Excel", command=export_button_pressed)
+btn_export_excel.pack()
 
 # Criar rótulos (labels) para indicar as caixas de entrada
 label_nota = tk.Label(root, text="Nota:")
@@ -236,8 +285,8 @@ btn_refresh = tk.Button(root, text="Refresh", command=load_table)
 btn_refresh.pack()
 
 # Botão para exportar os dados para um arquivo Excel
-btn_export_excel = tk.Button(root, text="Export to Excel", command=export_to_excel)
-btn_export_excel.pack()
+#btn_export_excel = tk.Button(root, text="Export to Excel", command=export_to_excel)
+#btn_export_excel.pack()
 
 # Carregar os dados da tabela ao iniciar o programa
 load_table()
